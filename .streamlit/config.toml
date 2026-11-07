@@ -1,0 +1,8 @@
+# Design system "Borse" — tema chiaro
+[theme]
+base = "light"
+primaryColor = "#0e5a61"            # petrolio
+backgroundColor = "#f5f7f6"         # surface-100
+secondaryBackgroundColor = "#e9edeb" # surface-200 (pannello laterale)
+textColor = "#14201d"               # ink
+font = "sans serif"                 # Source Sans, default di Streamlit

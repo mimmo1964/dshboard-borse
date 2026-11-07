@@ -18,9 +18,55 @@ try:
 except Exception:
     TA_AVAILABLE = False
 
-st.set_page_config(page_title="Andamento Borse Mondiali", layout="wide")
-st.title("Andamento borse mondiali — Dashboard interattiva")
-st.markdown("Seleziona gli indici e l'intervallo temporale per visualizzare l'andamento.")
+# --- Design system "Borse" (tema chiaro) -------------------------------------
+DS = {
+    "surface_100": "#f5f7f6", "surface_200": "#e9edeb", "surface_raised": "#ffffff",
+    "ink": "#14201d", "ink_muted": "#52605b", "rule": "#c9d1cd",
+    "petrolio": "#0e5a61", "ottone": "#8a6416",
+    "rialzo": "#17703f", "ribasso": "#b5381a",
+}
+SERIES_COLORS = ["#0e5a61", "#8a6416", "#3a52b0", "#7d3a70", "#5f6e1a", "#5a6a64"]
+FONT_DISPLAY = '"Barlow Condensed", "Arial Narrow", sans-serif'
+FONT_SANS = '"Source Sans 3", "Segoe UI", system-ui, sans-serif'
+FONT_MONO = '"IBM Plex Mono", ui-monospace, Menlo, monospace'
+
+DS_CSS = f"""
+<style>
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;600&display=swap");
+h1, h2, h3 {{ font-family: {FONT_DISPLAY} !important; font-weight: 600 !important; letter-spacing: .01em; }}
+h1 {{ color: {DS["petrolio"]} !important; }}
+[data-testid="stWidgetLabel"] p {{ font-size: 12px !important; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: {DS["ink_muted"]}; }}
+.b-table-wrap {{ overflow-x: auto; }}
+.b-table {{ border-collapse: collapse; width: 100%; font-family: {FONT_SANS}; font-size: 15px; }}
+.b-table th {{ background: {DS["surface_200"]}; text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: {DS["ink_muted"]}; white-space: nowrap; border: 0; }}
+.b-table td {{ padding: 8px 12px; border: 0; border-bottom: 1px solid {DS["rule"]}; white-space: nowrap; color: {DS["ink"]}; }}
+.b-table .num {{ text-align: right; font-family: {FONT_MONO}; font-variant-numeric: tabular-nums; font-size: 14px; }}
+.b-ticker {{ font-family: {FONT_MONO}; font-size: 12px; color: {DS["ink_muted"]}; }}
+.b-var--up {{ color: {DS["rialzo"]}; }} .b-var--down {{ color: {DS["ribasso"]}; }} .b-var--flat {{ color: {DS["ink_muted"]}; }}
+.b-note {{ font-size: 13px; line-height: 18px; color: {DS["ink_muted"]}; }}
+</style>
+"""
+
+
+def fmt_it(value, decimals=2):
+    """Numero in formato italiano: 34.218,47"""
+    s = f"{value:,.{decimals}f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def variazione_html(pct):
+    """Variazione con freccia, segno e colore (componente Variazione)."""
+    if round(pct, 2) == 0:
+        return '<span class="b-var--flat">0,00 %</span>'
+    if pct > 0:
+        return f'<span class="b-var--up"><span aria-hidden="true">▲</span> +{fmt_it(pct)} %</span>'
+    return f'<span class="b-var--down"><span aria-hidden="true">▼</span> −{fmt_it(abs(pct))} %</span>'
+
+
+st.set_page_config(page_title="Andamento borse mondiali", layout="wide")
+st.markdown(DS_CSS, unsafe_allow_html=True)
+st.title("Andamento borse mondiali")
+st.markdown("Seleziona gli indici e l'intervallo temporale per confrontarne l'andamento su base 100.")
 
 INDEX_TICKERS = {
     "S&P 500 (USA)": "^GSPC",
@@ -39,7 +85,7 @@ INDEX_TICKERS = {
 
 st.sidebar.header("Impostazioni")
 default = ["S&P 500 (USA)", "FTSE MIB (Italia)", "Nikkei 225 (Giappone)"]
-selected_indices = st.sidebar.multiselect("Seleziona indici", list(INDEX_TICKERS.keys()), default=default)
+selected_indices = st.sidebar.multiselect("Indici", list(INDEX_TICKERS.keys()), default=default)
 
 period_map = {
     "1 Mese": "1mo",
@@ -51,23 +97,27 @@ period_map = {
     "Max": "max"
 }
 period_choice = st.sidebar.selectbox("Intervallo temporale", list(period_map.keys()), index=3)
-freq_choice = st.sidebar.selectbox("Frequenza", ["1d", "1wk", "1mo"])
+freq_map = {"Giornaliera": "1d", "Settimanale": "1wk", "Mensile": "1mo"}
+freq_choice = freq_map[st.sidebar.selectbox("Frequenza", list(freq_map.keys()))]
 
 # Alpha Vantage settings
 use_av = st.sidebar.checkbox("Usa Alpha Vantage (intraday) se disponibile", value=False)
-av_interval = st.sidebar.selectbox("Intervallo AlphaV (se usato)", ["1min","5min","15min","30min","60min"], index=1)
+av_interval = st.sidebar.selectbox("Intervallo Alpha Vantage", ["1min","5min","15min","30min","60min"], index=1)
 
 # Read API key securely: prefer Streamlit secrets, then env var
 ALPHA_API_KEY = None
-if "ALPHA_API_KEY" in st.secrets:
-    ALPHA_API_KEY = st.secrets["ALPHA_API_KEY"]
-else:
+try:
+    ALPHA_API_KEY = st.secrets.get("ALPHA_API_KEY")
+except Exception:
+    # nessun secrets.toml (es. esecuzione locale)
+    pass
+if not ALPHA_API_KEY:
     ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY", None)
 
 if use_av and not ALPHA_AVAILABLE:
-    st.warning("alpha_vantage non è installato; installerai dal requirements o disabilita Alpha Vantage.")
+    st.warning("La libreria alpha_vantage non è installata. Aggiungila a requirements.txt o disattiva Alpha Vantage.")
 if use_av and not ALPHA_API_KEY:
-    st.warning("Hai abilitato Alpha Vantage ma non è stata trovata una chiave API. Impostala in st.secrets o come variabile d'ambiente ALPHA_API_KEY.")
+    st.warning("Chiave API Alpha Vantage non trovata. Aggiungila in Secrets come ALPHA_API_KEY.")
 
 if not selected_indices:
     st.warning("Seleziona almeno un indice nel pannello a sinistra.")
@@ -153,35 +203,70 @@ for name, sym in zip(selected_indices, symbols):
                 close = raw[sym]['Close'].dropna() if sym in raw.columns else pd.Series([], dtype=float)
 
     if close.empty:
-        st.warning(f"Nessun dato per {name} ({sym}).")
+        st.warning(f"Nessun dato per {name} ({sym}). L'indice non compare nel grafico.")
         continue
 
     # indicators and normalized series for plotting
     ind = add_indicators(close)
     norm = (close / close.iloc[0]) * 100
+    base = close.iloc[0] / 100
 
-    fig.add_trace(go.Scatter(x=norm.index, y=norm.values, mode='lines', name=name,
-                             hovertemplate='%{x}<br>%{y:.2f} (base 100)'))
+    k = len(table_rows)
+    color = SERIES_COLORS[k % len(SERIES_COLORS)]
+    dash = "solid" if k < len(SERIES_COLORS) else "dash"
+    group = f"g{k}"
 
-    fig.add_trace(go.Scatter(x=ind.index, y=ind["SMA20"], mode='lines', name=f"SMA20 {name}", opacity=0.6))
-    fig.add_trace(go.Scatter(x=ind.index, y=ind["EMA20"], mode='lines', name=f"EMA20 {name}", opacity=0.6))
+    fig.add_trace(go.Scatter(x=norm.index, y=norm.values, mode='lines', name=name, legendgroup=group,
+                             line=dict(color=color, width=2, dash=dash),
+                             hovertemplate='%{y:.2f}'))
+    # medie mobili sulla stessa scala base 100, stesso colore, 1px, opacità 0,6
+    fig.add_trace(go.Scatter(x=ind.index, y=ind["SMA20"] / base, mode='lines', name=f"SMA20 {name}", legendgroup=group,
+                             line=dict(color=color, width=1, dash="dash"), opacity=0.6, hovertemplate='%{y:.2f}'))
+    fig.add_trace(go.Scatter(x=ind.index, y=ind["EMA20"] / base, mode='lines', name=f"EMA20 {name}", legendgroup=group,
+                             line=dict(color=color, width=1, dash="dot"), opacity=0.6, hovertemplate='%{y:.2f}'))
+    # ultimo punto marcato
+    fig.add_trace(go.Scatter(x=[norm.index[-1]], y=[norm.values[-1]], mode='markers', legendgroup=group,
+                             marker=dict(color=color, size=6), showlegend=False, hoverinfo='skip'))
 
-    last_date = close.index[-1].strftime("%Y-%m-%d")
+    last_date = close.index[-1].strftime("%d/%m/%Y")
     last_value = close.iloc[-1]
     change_pct = (close.iloc[-1] / close.iloc[-2] - 1) * 100 if len(close) >= 2 else 0.0
-    table_rows.append({"Indice": name, "Simbolo": sym, "Ultima data": last_date, "Ultimo valore": f"{last_value:.2f}", "Variazione % (ultimo giorno)": f"{change_pct:.2f}%"})
+    table_rows.append({"Indice": name, "Simbolo": sym, "Ultima data": last_date,
+                       "Ultimo valore": fmt_it(last_value), "Variazione": variazione_html(change_pct)})
 
-fig.update_layout(title="Andamento normalizzato (base 100) — confronto indici",
-                  xaxis_title="Data", yaxis_title="Valore (base 100)",
-                  hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+fig.add_hline(y=100, line=dict(color=DS["ottone"], width=1, dash="dash"))
+fig.update_layout(title=dict(text="Andamento normalizzato (base 100)",
+                             font=dict(family=FONT_DISPLAY, size=26, color=DS["ink"])),
+                  font=dict(family=FONT_SANS, size=13, color=DS["ink_muted"]),
+                  paper_bgcolor=DS["surface_100"], plot_bgcolor=DS["surface_100"],
+                  xaxis=dict(title="Data", showgrid=False, linecolor=DS["rule"], tickformat="%m/%Y", hoverformat="%d/%m/%Y"),
+                  yaxis=dict(title="Valore (base 100)", gridcolor=DS["rule"], zeroline=False),
+                  separators=",.",
+                  hovermode="x unified",
+                  hoverlabel=dict(bgcolor=DS["surface_raised"], bordercolor=DS["rule"],
+                                  font=dict(family=FONT_MONO, size=14, color=DS["ink"])),
+                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                              font=dict(color=DS["ink"])))
 
 st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("### Riepilogo indici")
-df_summary = pd.DataFrame(table_rows)
-st.dataframe(df_summary)
+rows_html = "".join(
+    f'<tr><td>{r["Indice"]}</td><td><span class="b-ticker">{r["Simbolo"]}</span></td>'
+    f'<td class="num">{r["Ultima data"]}</td><td class="num">{r["Ultimo valore"]}</td>'
+    f'<td class="num">{r["Variazione"]}</td></tr>'
+    for r in table_rows
+)
+st.markdown(
+    '<div class="b-table-wrap"><table class="b-table"><thead><tr>'
+    '<th>Indice</th><th>Simbolo</th><th>Ultima data</th>'
+    '<th style="text-align:right">Ultimo valore</th><th style="text-align:right">Var. % (ultimo giorno)</th>'
+    f'</tr></thead><tbody>{rows_html}</tbody></table></div>',
+    unsafe_allow_html=True,
+)
+st.write("")
 
-if st.button("Scarica dati (CSV)"):
+if st.button("Prepara CSV"):
     combined = pd.DataFrame()
     for name, sym in zip(selected_indices, symbols):
         if isinstance(raw, dict) and name in raw:
@@ -198,7 +283,9 @@ if st.button("Scarica dati (CSV)"):
                     c = raw[sym]['Close'] if sym in raw.columns else pd.Series([], dtype=float)
             combined[name] = c
     csv = combined.to_csv()
-    st.download_button("Download CSV", data=csv, file_name="indici_mercati.csv", mime="text/csv")
+    st.download_button("Scarica CSV", data=csv, file_name="indici_mercati.csv", mime="text/csv", type="primary")
 
 st.markdown("---")
-st.markdown("**Nota:** i dati provengono da Yahoo Finance tramite yfinance e/o Alpha Vantage. I feed gratuiti possono avere ritardi. Per dati real-time affidabili usa provider a pagamento.")
+st.markdown('<p class="b-note">Dati Yahoo Finance via yfinance e, se attivo, Alpha Vantage. '
+            'I feed gratuiti possono avere ritardi: per dati in tempo reale serve un provider a pagamento.</p>',
+            unsafe_allow_html=True)
